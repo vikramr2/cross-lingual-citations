@@ -3,41 +3,44 @@ import pandas as pd
 import json
 from tqdm import tqdm
 
+def get_comp(df):
+    # Calculate total counts per cluster
+    total_counts = df.groupby('cluster_id').size().reset_index(name='total_count')
+
+    # Calculate counts of each field and language for each cluster
+    field_counts = df.groupby(['cluster_id', 'field']).size().unstack(fill_value=0)
+    language_counts = df.groupby(['cluster_id', 'language']).size().unstack(fill_value=0)
+
+    # Combine field and language counts
+    combined_counts = pd.concat([field_counts, language_counts], axis=1).reset_index()
+
+    # Merge with total counts to calculate percentages
+    combined_counts = combined_counts.merge(total_counts, on='cluster_id')
+
+    # Calculate percentages for each column
+    for column in combined_counts.columns[1:-1]:
+        combined_counts[column] = (combined_counts[column] / combined_counts['total_count']) * 100
+
+    # Drop the total_count column as it's not needed in the final output
+    combined_counts = combined_counts.drop(columns=['total_count'])
+
+    return combined_counts
+
 file = argv[1]
 
 # Get file without the folder and the extension
-filename = file.split('/')[-1].split('.')[0]
+filename = file.split('/')[-1].split('.tsv')[0]
 
 # Load the tsv file
 df = pd.read_csv(file, sep='\t', header=None)
 df.columns = ['id', 'cluster_id']
 
 # Load the csv file
-langdata = pd.read_csv('../data/cleaned/oc_corroborated_langdata.csv')
+langdata = pd.read_csv('../../data/cleaned/oc_corroborated_langdata.csv')
 
 # Merge the dataframes on the 'id' column
 merged_df = pd.merge(df, langdata, on='id')
+merged_df = merged_df[['id', 'cluster_id', 'language', 'field']]
 
-# Group by cluster_id and aggregate the percentages for field, subfield, and language
-def get_composition(group):
-    total = len(group)
-    field = (group['field'].value_counts(normalize=True) * 100).to_dict()
-    subfield = (group['subfield'].value_counts(normalize=True) * 100).to_dict()
-    language = (group['language'].value_counts(normalize=True) * 100).to_dict()
-    return pd.Series({'field': field, 'subfield': subfield, 'language': language})
-
-# Get unique cluster IDs
-unique_cluster_ids = merged_df['cluster_id'].unique()
-
-# Initialize an empty dictionary to store the cluster composition
-cluster_composition = {}
-
-# Iterate over the unique cluster IDs with a progress bar
-for cluster_id in tqdm(unique_cluster_ids, desc="Processing clusters"):
-    group = merged_df[merged_df['cluster_id'] == cluster_id]
-    cluster_composition[cluster_id] = get_composition(group).to_dict()
-
-# Save the cluster composition to a json file
-with open(f'../data/{filename}_cluster_composition.json', 'w') as f:
-    json.dump(cluster_composition, f, indent=4)
-
+comp_df = get_comp(merged_df)
+comp_df.to_csv(f'{filename}_cluster_comp.csv', index=False)
